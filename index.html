@@ -50,13 +50,13 @@ const mir=a=>a.map(x=>({t:x.t,o:-x.o,h:-x.l,l:-x.h,c:-x.c}));
 const T=t=>new Date(t).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
 
 async function getJSON(url){
-  for(const u of [url,'https://corsproxy.io/?'+encodeURIComponent(url),'https://api.allorigins.win/raw?url='+encodeURIComponent(url)]){
-    try{const r=await fetch(u,{cache:'no-store'});if(r.ok)return await r.json()}catch(e){}
-  }
-  throw new Error('Data feed unreachable');
+  const r=await fetch(url,{cache:'no-store'});
+  if(!r.ok)throw new Error('Feed error '+r.status+' for '+url.split('symbol=')[1].split('&')[0]);
+  return await r.json();
 }
 async function candles(sym,iv,range){
-  const j=await getJSON(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=${iv}&range=${range}&_=${Date.now()}`);
+  const j=await getJSON(`/api/candles?symbol=${encodeURIComponent(sym)}&interval=${iv}&range=${range}&_=${Date.now()}`);
+  if(!j.chart||!j.chart.result||!j.chart.result[0]||!j.chart.result[0].timestamp)throw new Error('No candles returned for '+sym);
   const r=j.chart.result[0],q=r.indicators.quote[0],o=[];
   r.timestamp.forEach((t,i)=>{if([q.open[i],q.high[i],q.low[i],q.close[i]].every(v=>v!=null))o.push({t:t*1000,o:q.open[i],h:q.high[i],l:q.low[i],c:q.close[i]})});
   return o;
@@ -132,11 +132,11 @@ async function run(i){
   const P=PAIRS[i],el=$('r'+i);
   el.innerHTML='<p class="mu">Fetching live data…</p>';
   try{
-    let c1,c5,used;
+    let c1,c5,used,err;
     for(const y of P.y){
-      try{[c1,c5]=await Promise.all([candles(y,'1m','2d'),candles(y,'5m','5d')]);if(c1.length>60&&c5.length>60){used=y;break}}catch(e){}
+      try{[c1,c5]=await Promise.all([candles(y,'1m','2d'),candles(y,'5m','5d')]);if(c1.length>60&&c5.length>60){used=y;break}err='Too few candles for '+y}catch(e){err=e.message}
     }
-    if(!used)throw new Error('No data. The market may be closed or the feed is blocked.');
+    if(!used)throw new Error(err?'Feed problem: '+err:'No data. The market may be closed.');
     const px=c1[c1.length-1].c,last=c1[c1.length-1].t;
     const k1=c1.slice(0,-1),k5=c5.slice(0,-1); // closed candles only
     const rs=[1,-1].map(s=>{const r=scan(s===1?k1:mir(k1),s===1?k5:mir(k5),P,s);r.s=s;return r});
