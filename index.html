@@ -32,7 +32,7 @@ p{margin:6px 0}
 <h1>iFVG Scanner</h1>
 <div class="mu">Tap a pair to pull live 1m + 5m data and run the setup rules.</div>
 <div class="grid" id="grid"></div>
-<p class="mu">Educational tool based on the Sanos iFVG checklist, not financial advice. Data comes from Yahoo Finance and can lag by a minute or more, so always confirm the entry on your own live chart before trading.</p>
+<p class="mu">Educational tool based on the Sanos iFVG checklist, not financial advice. Data comes from Yahoo Finance and can lag by a minute or more, so always confirm the entry on your own live chart before trading. Compare the card’s current price with your broker chart: if they differ, shift the levels by the difference.</p>
 
 <script>
 // ---- Settings: edit pairs here. d = decimals, p = minimum FVG size as % of price (9 NQ points ≈ 0.035%) ----
@@ -42,7 +42,12 @@ const PAIRS=[
 {n:'Euro',s:'EURUSD',y:['EURUSD=X'],d:5,p:0.035},
 {n:'Pound',s:'GBPUSD',y:['GBPUSD=X'],d:5,p:0.035},
 {n:'Dollar / Yen',s:'USDJPY',y:['JPY=X'],d:3,p:0.035},
-{n:'Pound / Yen',s:'GBPJPY',y:['GBPJPY=X'],d:3,p:0.035}];
+{n:'Pound / Yen',s:'GBPJPY',y:['GBPJPY=X'],d:3,p:0.035},
+{n:'Aussie',s:'AUDUSD',y:['AUDUSD=X'],d:5,p:0.035},
+{n:'Dollar / CAD',s:'USDCAD',y:['CAD=X'],d:5,p:0.035},
+{n:'Dollar / Franc',s:'USDCHF',y:['CHF=X'],d:5,p:0.035},
+{n:'Kiwi',s:'NZDUSD',y:['NZDUSD=X'],d:5,p:0.035},
+{n:'Euro / Yen',s:'EURJPY',y:['EURJPY=X'],d:3,p:0.035}];
 const MIN_RR=1.5;
 const NAMES={sweep:'Liquidity sweep (5m)',ifvg:'iFVG (1m)',size:'FVG size',delivery:'Delivery',targets:'Targets'};
 const $=id=>document.getElementById(id);
@@ -78,15 +83,17 @@ function scan(c1,c5,P,s){
   const ck={sweep:[0,`No 5m swing ${hiN} swept recently`],ifvg:[0,'Waiting for a sweep'],size:[0,'—'],delivery:[0,'—'],targets:[0,'—']};
   const n5=c5.length,n1=c1.length,ph=piv(c5,true);
   // 1) liquidity sweep: a 5m candle wicks past a clean swing level and closes back inside
-  let sw=null;
+  // the swing must have rejected from a 5m FVG (the PDF requirement)
+  const rej=p=>{for(let m=Math.max(2,p-150);m<p;m++){const top=c5[m-2].l,bot=c5[m].h;if(top>bot&&c5[p].h>=bot&&c5[p].h<=top)return true}return false};
+  let sw=null,nr=null;
   for(let k=n5-1;k>=Math.max(n5-30,0)&&!sw;k--)for(let q=ph.length-1;q>=0;q--){
     const p=ph[q];if(p>k-3)continue;if(k-p>150)break;
     const L=c5[p].h;
-    if(c5[k].h>L&&c5[k].c<L&&c5.slice(p+1,k).every(x=>x.h<L)){sw={k,L};break}
+    if(c5[k].h>L&&c5[k].c<L&&c5.slice(p+1,k).every(x=>x.h<L)){if(rej(p)){sw={k,L};break}if(nr===null)nr=L}
   }
-  if(!sw)return{ck};
-  ck.sweep=[1,`5m swing ${hiN} ${f(sw.L)} swept at ${T(c5[sw.k].t)}`];
-  const t0=c5[sw.k].t,X=Math.max(...c1.filter(x=>x.t>=t0).map(x=>x.h));
+  if(!sw){if(nr!==null)ck.sweep[1]=`5m swing ${hiN} ${f(nr)} was swept, but it never rejected from a 5m FVG`;return{ck}}
+  ck.sweep=[1,`5m swing ${hiN} ${f(sw.L)} (rejected from a 5m FVG) swept at ${T(c5[sw.k].t)}`];
+  const t0=c5[sw.k].t;
   // 2) 1m FVG that gets closed through after the sweep (inverse FVG)
   const cs=[];
   for(let i=Math.max(2,n1-200);i<n1;i++){
@@ -97,6 +104,7 @@ function scan(c1,c5,P,s){
   cs.sort((a,b)=>b.j-a.j);
   function ev(cd){
     const k2={...ck},size=cd.top-cd.bot,min=Math.abs(c1[n1-1].c)*P.p/100;
+    const X=Math.max(...c1.slice(0,cd.j+1).filter(x=>x.t>=t0).map(x=>x.h));
     k2.ifvg=[1,`1m ${gapN} FVG ${rg(cd.bot,cd.top)} closed through at ${T(c1[cd.j].t)}`];
     k2.size=[size>=min?1:0,`Gap ${size.toFixed(dec)} vs minimum ${min.toFixed(dec)}`];
     // 3) delivery: sweep extreme tapped an opposing FVG on 1m or 5m
@@ -110,7 +118,9 @@ function scan(c1,c5,P,s){
     }
     k2.delivery=dl?[1,`Delivering from ${dl.tf} ${delN} FVG ${rg(dl.bot,dl.top)}`]:[0,`Sweep not inside any 1m/5m ${delN} FVG`];
     // 4) targets: 5m swing levels in trade direction
-    const entry=c1[cd.j].c,sl=Math.max(cd.top,c1[cd.j].h)+size*0.1,risk=sl-entry;
+    // stop goes beyond the sweep extreme and is at least 1.5x the average 1m range away
+    const atr=c1.slice(-30).reduce((a,x)=>a+x.h-x.l,0)/30,entry=c1[cd.j].c;
+    const sl=Math.max(Math.max(cd.top,c1[cd.j].h,X)+size*0.1,entry+1.5*atr),risk=sl-entry;
     const lows=piv(c5,false).filter(p=>p>n5-250).map(p=>c5[p].l).filter(l=>l<entry).sort((a,b)=>b-a);
     const tp=lows.find(l=>(entry-l)/risk>=MIN_RR);
     const be=lows.find(l=>l!==tp&&(entry-l)/risk>=0.5&&(tp===undefined||l>tp));
@@ -121,7 +131,7 @@ function scan(c1,c5,P,s){
     let state='live';
     for(let m=cd.j+1;m<n1;m++){if(c1[m].h>=sl){state='stopped';break}if(c1[m].l<=tp){state='tp';break}}
     const r5=c5.slice(-288),mid=(Math.max(...r5.map(x=>x.h))+Math.min(...r5.map(x=>x.l)))/2;
-    return{ck:k2,setup:{entry:s*entry,sl:s*sl,tp:s*tp,be:be===undefined?null:s*be,rr,t:c1[cd.j].t,state,prem:entry>mid}};
+    return{ck:k2,setup:{entry:s*entry,sl:s*sl,tp:s*tp,be:be===undefined?null:s*be,rr,risk,atr,t:c1[cd.j].t,state,prem:entry>mid}};
   }
   let first=null;
   for(const cd of cs){const r=ev(cd);first=first||r;if(r.setup)return r}
@@ -154,6 +164,7 @@ async function run(i){
 <table>
 <tr><td>Entry</td><td>${F(S.entry)}</td></tr>
 <tr><td>Stop loss</td><td>${F(S.sl)}</td></tr>
+<tr><td>Stop distance</td><td>${F(S.risk)} (${(S.risk/S.atr).toFixed(1)}× avg 1m range)</td></tr>
 <tr><td>Take profit</td><td>${F(S.tp)}</td></tr>
 <tr><td>Move to break-even at</td><td>${S.be===null?'n/a':F(S.be)}</td></tr>
 <tr><td>Reward : risk</td><td>${S.rr.toFixed(1)} : 1</td></tr>
