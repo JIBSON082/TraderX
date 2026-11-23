@@ -119,7 +119,9 @@ function scan(c1,c5,P,s){
     k2.delivery=dl?[1,`Delivering from ${dl.tf} ${delN} FVG ${rg(dl.bot,dl.top)}`]:[0,`Sweep not inside any 1m/5m ${delN} FVG`];
     // 4) targets: 5m swing levels in trade direction
     // stop goes beyond the sweep extreme and is at least 1.5x the average 1m range away
-    const atr=c1.slice(-30).reduce((a,x)=>a+x.h-x.l,0)/30,entry=c1[cd.j].c;
+    // Yahoo forex 1m candles are often flat (high = low), so also estimate the 1m range from 5m candles
+    const a1=c1.slice(-30).reduce((a,x)=>a+x.h-x.l,0)/30,a5=c5.slice(-20).reduce((a,x)=>a+x.h-x.l,0)/20/2.2;
+    const atr=Math.max(a1,a5),entry=c1[cd.j].c;
     const sl=Math.max(Math.max(cd.top,c1[cd.j].h,X)+size*0.1,entry+1.5*atr),risk=sl-entry;
     const lows=piv(c5,false).filter(p=>p>n5-250).map(p=>c5[p].l).filter(l=>l<entry).sort((a,b)=>b-a);
     const tp=lows.find(l=>(entry-l)/risk>=MIN_RR);
@@ -164,7 +166,7 @@ async function run(i){
 <table>
 <tr><td>Entry</td><td>${F(S.entry)}</td></tr>
 <tr><td>Stop loss</td><td>${F(S.sl)}</td></tr>
-<tr><td>Stop distance</td><td>${F(S.risk)} (${(S.risk/S.atr).toFixed(1)}× avg 1m range)</td></tr>
+<tr><td>Stop distance</td><td>${F(S.risk)}${S.atr>0?` (${(S.risk/S.atr).toFixed(1)}× avg 1m range)`:''}</td></tr>
 <tr><td>Take profit</td><td>${F(S.tp)}</td></tr>
 <tr><td>Move to break-even at</td><td>${S.be===null?'n/a':F(S.be)}</td></tr>
 <tr><td>Reward : risk</td><td>${S.rr.toFixed(1)} : 1</td></tr>
